@@ -90,17 +90,17 @@
 │                          │                                   │
 ├──────────────────────────┼───────────────────────────────────┤
 │                          ▼                                   │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐  │
-│  │   MongoDB 7.x   │  │   Redis 7.x     │  │ Cloudinary │  │
-│  │                  │  │                  │  │            │  │
-│  │ - User profiles  │  │ - Online/Offline │  │ - Avatar   │  │
-│  │ - Conversations  │  │ - Message Queue  │  │ - Media    │  │
-│  │ - Message meta   │  │ - Typing state   │  │ - Stories  │  │
-│  │ - Friend graph   │  │ - Call state     │  │ - Files    │  │
-│  │ - Stories        │  │ - OTP storage    │  │            │  │
-│  │ - Call logs      │  │ - Rate limiting  │  │            │  │
-│  │ - Backup records │  │ - Deduplication  │  │            │  │
-│  └─────────────────┘  └─────────────────┘  └────────────┘  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐  │
+│  │   MongoDB 7.x   │  │   Redis 7.x     │  │ Local Storage│  │
+│  │                  │  │                  │  │ + Sharp      │  │
+│  │ - User profiles  │  │ - Online/Offline │  │ - Avatar     │  │
+│  │ - Conversations  │  │ - Message Queue  │  │ - Media      │  │
+│  │ - Message meta   │  │ - Typing state   │  │ - Stories    │  │
+│  │ - Friend graph   │  │ - Call state     │  │ - Files      │  │
+│  │ - Stories        │  │ - OTP storage    │  │              │  │
+│  │ - Call logs      │  │ - Rate limiting  │  │              │  │
+│  │ - Backup records │  │ - Deduplication  │  │              │  │
+│  └─────────────────┘  └─────────────────┘  └──────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -232,7 +232,7 @@ Alice muốn nhắn tin cho Bob:
 ### 5. ☁️ Cloud Backup Flow
 
 ```
-Client                        Server                   Cloudinary
+Client                        Server                 Local Storage
   │                              │                          │
   │── [Encrypt local data       │                          │
   │    with user password        │                          │
@@ -275,7 +275,7 @@ Server:
 | **Auth** | JWT (jsonwebtoken) | Access/Refresh token |
 | **Password** | bcryptjs | Password hashing (12 rounds) |
 | **Validation** | Joi | Request validation |
-| **Upload** | Multer + Cloudinary | File upload & CDN |
+| **Upload** | Multer + Sharp | Xử lý ảnh & lưu trữ cục bộ |
 | **Push** | Firebase Admin SDK | FCM push notifications |
 | **Encryption** | node-forge + crypto | AES-256-GCM, RSA, PBKDF2 |
 | **Security** | Helmet, CORS, HPP, mongo-sanitize | HTTP security headers |
@@ -367,7 +367,6 @@ alohi-api/
     │   ├── constants.js       # Enums, Redis keys, upload limits
     │   ├── database.js        # MongoDB connection + reconnect
     │   ├── redis.js           # ioredis connection + retry
-    │   ├── cloudinary.js      # Media CDN config
     │   ├── firebase.js        # FCM push config
     │   └── swagger.js         # OpenAPI spec
     │
@@ -408,7 +407,7 @@ alohi-api/
     │   ├── message.service.js     # Message pipeline + dedup
     │   ├── presence.service.js    # Online/offline via Redis
     │   ├── notification.service.js# FCM push + smart mute
-    │   ├── upload.service.js      # Cloudinary + thumbnails
+    │   ├── upload.service.js      # File storage, Sharp optimize
     │   ├── otp.service.js         # OTP generate/verify via Redis
     │   ├── encryption.service.js  # Key bundle management
     │   └── backup.service.js      # Cloud backup CRUD
@@ -638,9 +637,8 @@ pm2 start ecosystem.config.js --env production
 | `JWT_REFRESH_SECRET` | *(required)* | JWT refresh token secret |
 | `JWT_ACCESS_EXPIRES_IN` | 15m | Access token TTL |
 | `JWT_REFRESH_EXPIRES_IN` | 30d | Refresh token TTL |
-| `CLOUDINARY_CLOUD_NAME` | *(optional)* | Cloudinary cloud name |
-| `CLOUDINARY_API_KEY` | *(optional)* | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | *(optional)* | Cloudinary API secret |
+| `UPLOAD_DIR` | uploads | Thư mục lưu trữ file |
+| `UPLOAD_MAX_SIZE` | 100 | Giới hạn dung lượng (MB) |
 
 ---
 

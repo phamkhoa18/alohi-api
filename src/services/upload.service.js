@@ -1,224 +1,431 @@
-const { cloudinary } = require('../config/cloudinary');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
+const crypto = require('crypto');
+const sharp = require('sharp');
 const logger = require('../utils/logger');
+const ApiError = require('../utils/ApiError');
+
+// Base upload directory
+const UPLOAD_BASE = path.join(process.cwd(), 'uploads');
+
+// Sub-directories for organized storage
+const UPLOAD_DIRS = {
+  avatars: path.join(UPLOAD_BASE, 'avatars'),
+  avatarThumbs: path.join(UPLOAD_BASE, 'avatars', 'thumbs'),
+  covers: path.join(UPLOAD_BASE, 'covers'),
+  chatImages: path.join(UPLOAD_BASE, 'chat', 'images'),
+  chatImageThumbs: path.join(UPLOAD_BASE, 'chat', 'images', 'thumbs'),
+  chatVideos: path.join(UPLOAD_BASE, 'chat', 'videos'),
+  chatAudio: path.join(UPLOAD_BASE, 'chat', 'audio'),
+  chatFiles: path.join(UPLOAD_BASE, 'chat', 'files'),
+  stories: path.join(UPLOAD_BASE, 'stories'),
+  storyThumbs: path.join(UPLOAD_BASE, 'stories', 'thumbs'),
+  stickers: path.join(UPLOAD_BASE, 'stickers'),
+  temp: path.join(UPLOAD_BASE, 'temp'),
+};
+
+/**
+ * Ensure all upload directories exist
+ */
+const ensureUploadDirs = () => {
+  Object.values(UPLOAD_DIRS).forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  });
+  logger.info('✅ Upload directories ready');
+};
+
+// Initialize on load
+ensureUploadDirs();
+
+/**
+ * Generate a unique filename
+ */
+const generateFilename = (ext = '.webp') => {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const id = crypto.randomUUID();
+  return `${date}_${id}${ext}`;
+};
+
+/**
+ * Build public URL from file path
+ */
+const toPublicUrl = (filePath) => {
+  const relative = path.relative(UPLOAD_BASE, filePath).replace(/\\/g, '/');
+  return `/uploads/${relative}`;
+};
+
+/**
+ * Get file info (size, etc.)
+ */
+const getFileInfo = async (filePath) => {
+  const stat = await fsp.stat(filePath);
+  return { fileSize: stat.size };
+};
 
 class UploadService {
-  /**
-   * Upload file to Cloudinary
-   */
-  async uploadToCloudinary(filePath, options = {}) {
-    const {
-      folder = 'alohi',
-      resourceType = 'auto',
-      transformation = [],
-      maxWidth,
-      maxHeight,
-      quality,
-    } = options;
 
-    const uploadOptions = {
-      folder,
-      resource_type: resourceType,
-      unique_filename: true,
-      overwrite: false,
-    };
-
-    if (transformation.length > 0) {
-      uploadOptions.transformation = transformation;
-    }
-
-    if (maxWidth || maxHeight) {
-      uploadOptions.transformation = uploadOptions.transformation || [];
-      uploadOptions.transformation.push({
-        width: maxWidth,
-        height: maxHeight,
-        crop: 'limit',
-        quality: quality || 'auto',
-      });
-    }
-
-    try {
-      const result = await cloudinary.uploader.upload(filePath, uploadOptions);
-
-      // Clean up temp file
-      this.cleanupTempFile(filePath);
-
-      return {
-        url: result.secure_url,
-        publicId: result.public_id,
-        width: result.width,
-        height: result.height,
-        fileSize: result.bytes,
-        format: result.format,
-        resourceType: result.resource_type,
-        duration: result.duration,
-      };
-    } catch (error) {
-      this.cleanupTempFile(filePath);
-      logger.error('Cloudinary upload error:', error.message);
-      throw error;
-    }
-  }
+  // ─── AVATAR ────────────────────────────────────────────────────────
 
   /**
-   * Upload avatar with thumbnail
+   * Upload avatar with automatic thumbnail generation
+   * Main: 400x400 WebP | Thumb: 100x100 WebP
    */
   async uploadAvatar(filePath) {
-    const main = await this.uploadToCloudinary(filePath, {
-      folder: 'alohi/avatars',
-      transformation: [
-        { width: 400, height: 400, crop: 'fill', gravity: 'face' },
-        { quality: 'auto', fetch_format: 'webp' },
-      ],
-    });
+    try {
+      const filename = generateFilename();
+      const mainPath = path.join(UPLOAD_DIRS.avatars, filename);
+      const thumbPath = path.join(UPLOAD_DIRS.avatarThumbs, filename);
 
-    // Generate thumbnail URL
-    const thumbnailUrl = cloudinary.url(main.publicId, {
-      width: 100,
-      height: 100,
-      crop: 'fill',
-      gravity: 'face',
-      quality: 'auto',
-      fetch_format: 'webp',
-    });
+      // Main avatar — 400x400, high quality
+      const mainInfo = await sharp(filePath)
+        .resize(400, 400, { fit: 'cover', position: 'centre' })
+        .webp({ quality: 85 })
+        .toFile(mainPath);
 
-    return {
-      url: main.url,
-      publicId: main.publicId,
-      thumbnailUrl,
-    };
+      // Thumbnail — 100x100, lower quality for fast loading
+      await sharp(filePath)
+        .resize(100, 100, { fit: 'cover', position: 'centre' })
+        .webp({ quality: 70 })
+        .toFile(thumbPath);
+
+      this._cleanupTemp(filePath);
+
+      return {
+        url: toPublicUrl(mainPath),
+        thumbnailUrl: toPublicUrl(thumbPath),
+        filename,
+        width: mainInfo.width,
+        height: mainInfo.height,
+        fileSize: mainInfo.size,
+        format: 'webp',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('Avatar upload error:', error.message);
+      throw ApiError.internal('Lỗi upload avatar');
+    }
   }
 
+  // ─── COVER PHOTO ───────────────────────────────────────────────────
+
   /**
-   * Upload cover photo
+   * Upload cover photo — max 1200px wide, auto height
    */
   async uploadCoverPhoto(filePath) {
-    return this.uploadToCloudinary(filePath, {
-      folder: 'alohi/covers',
-      maxWidth: 1200,
-      maxHeight: 400,
-      quality: 'auto',
-    });
+    try {
+      const filename = generateFilename();
+      const outputPath = path.join(UPLOAD_DIRS.covers, filename);
+
+      const info = await sharp(filePath)
+        .resize(1200, 400, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 85 })
+        .toFile(outputPath);
+
+      this._cleanupTemp(filePath);
+
+      return {
+        url: toPublicUrl(outputPath),
+        filename,
+        width: info.width,
+        height: info.height,
+        fileSize: info.size,
+        format: 'webp',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('Cover photo upload error:', error.message);
+      throw ApiError.internal('Lỗi upload ảnh bìa');
+    }
   }
 
+  // ─── CHAT IMAGE ────────────────────────────────────────────────────
+
   /**
-   * Upload chat image
+   * Upload chat image with thumbnail
+   * Main: max 2048px wide, WebP | Thumb: 200x200
    */
   async uploadChatImage(filePath) {
-    const main = await this.uploadToCloudinary(filePath, {
-      folder: 'alohi/chat/images',
-      maxWidth: 2048,
-      quality: 80,
-    });
+    try {
+      const filename = generateFilename();
+      const mainPath = path.join(UPLOAD_DIRS.chatImages, filename);
+      const thumbPath = path.join(UPLOAD_DIRS.chatImageThumbs, filename);
 
-    const thumbnailUrl = cloudinary.url(main.publicId, {
-      width: 200,
-      height: 200,
-      crop: 'fill',
-      quality: 'auto',
-      fetch_format: 'webp',
-    });
+      // Main image — preserve aspect ratio, max 2048px
+      const mainInfo = await sharp(filePath)
+        .resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toFile(mainPath);
 
-    return { ...main, thumbnailUrl };
+      // Thumbnail
+      await sharp(filePath)
+        .resize(200, 200, { fit: 'cover' })
+        .webp({ quality: 60 })
+        .toFile(thumbPath);
+
+      this._cleanupTemp(filePath);
+
+      return {
+        url: toPublicUrl(mainPath),
+        thumbnailUrl: toPublicUrl(thumbPath),
+        filename,
+        width: mainInfo.width,
+        height: mainInfo.height,
+        fileSize: mainInfo.size,
+        format: 'webp',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('Chat image upload error:', error.message);
+      throw ApiError.internal('Lỗi upload ảnh chat');
+    }
   }
+
+  // ─── CHAT VIDEO ────────────────────────────────────────────────────
 
   /**
-   * Upload chat video
+   * Upload chat video (move to organized folder, no transcoding)
    */
   async uploadChatVideo(filePath) {
-    const result = await this.uploadToCloudinary(filePath, {
-      folder: 'alohi/chat/videos',
-      resourceType: 'video',
-      transformation: [
-        { quality: 'auto', fetch_format: 'mp4' },
-      ],
-    });
+    try {
+      const ext = path.extname(filePath) || '.mp4';
+      const filename = generateFilename(ext);
+      const outputPath = path.join(UPLOAD_DIRS.chatVideos, filename);
 
-    // Generate video thumbnail
-    const thumbnailUrl = cloudinary.url(result.publicId, {
-      resource_type: 'video',
-      width: 320,
-      height: 240,
-      crop: 'fill',
-      format: 'jpg',
-    });
+      await fsp.rename(filePath, outputPath);
+      const { fileSize } = await getFileInfo(outputPath);
 
-    return { ...result, thumbnailUrl };
+      return {
+        url: toPublicUrl(outputPath),
+        filename,
+        fileSize,
+        format: ext.replace('.', ''),
+        resourceType: 'video',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('Chat video upload error:', error.message);
+      throw ApiError.internal('Lỗi upload video');
+    }
   }
+
+  // ─── AUDIO / VOICE MESSAGE ────────────────────────────────────────
 
   /**
    * Upload audio/voice message
    */
   async uploadAudio(filePath) {
-    return this.uploadToCloudinary(filePath, {
-      folder: 'alohi/chat/audio',
-      resourceType: 'video', // Cloudinary uses 'video' for audio
-    });
+    try {
+      const ext = path.extname(filePath) || '.ogg';
+      const filename = generateFilename(ext);
+      const outputPath = path.join(UPLOAD_DIRS.chatAudio, filename);
+
+      await fsp.rename(filePath, outputPath);
+      const { fileSize } = await getFileInfo(outputPath);
+
+      return {
+        url: toPublicUrl(outputPath),
+        filename,
+        fileSize,
+        format: ext.replace('.', ''),
+        resourceType: 'audio',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('Audio upload error:', error.message);
+      throw ApiError.internal('Lỗi upload audio');
+    }
   }
 
+  // ─── GENERAL FILE ─────────────────────────────────────────────────
+
   /**
-   * Upload general file
+   * Upload any file (documents, zip, etc.)
    */
   async uploadFile(filePath, originalName) {
-    return this.uploadToCloudinary(filePath, {
-      folder: 'alohi/chat/files',
-      resourceType: 'raw',
-    });
+    try {
+      const ext = path.extname(originalName || filePath);
+      const filename = generateFilename(ext);
+      const outputPath = path.join(UPLOAD_DIRS.chatFiles, filename);
+
+      await fsp.rename(filePath, outputPath);
+      const { fileSize } = await getFileInfo(outputPath);
+
+      return {
+        url: toPublicUrl(outputPath),
+        filename,
+        originalName: originalName || filename,
+        fileSize,
+        format: ext.replace('.', ''),
+        resourceType: 'file',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('File upload error:', error.message);
+      throw ApiError.internal('Lỗi upload file');
+    }
   }
 
+  // ─── STORY MEDIA ──────────────────────────────────────────────────
+
   /**
-   * Upload story media
+   * Upload story image or video
    */
   async uploadStoryMedia(filePath, type) {
-    if (type === 'image') {
-      const result = await this.uploadToCloudinary(filePath, {
-        folder: 'alohi/stories',
-        transformation: [
-          { width: 1080, height: 1920, crop: 'limit' },
-          { quality: 'auto', fetch_format: 'webp' },
-        ],
-      });
-
-      const thumbnailUrl = cloudinary.url(result.publicId, {
-        width: 200,
-        height: 360,
-        crop: 'fill',
-        quality: 'auto',
-        fetch_format: 'webp',
-      });
-
-      return { ...result, thumbnailUrl };
-    }
-
-    // Video story
-    return this.uploadToCloudinary(filePath, {
-      folder: 'alohi/stories',
-      resourceType: 'video',
-      transformation: [
-        { duration: '30', quality: 'auto' },
-      ],
-    });
-  }
-
-  /**
-   * Delete file from Cloudinary
-   */
-  async deleteFromCloudinary(publicId, resourceType = 'image') {
     try {
-      await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
-      logger.info(`Deleted from Cloudinary: ${publicId}`);
+      if (type === 'image') {
+        const filename = generateFilename();
+        const mainPath = path.join(UPLOAD_DIRS.stories, filename);
+        const thumbPath = path.join(UPLOAD_DIRS.storyThumbs, filename);
+
+        // Story image — 1080x1920 max (9:16 aspect for mobile)
+        const mainInfo = await sharp(filePath)
+          .resize(1080, 1920, { fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 85 })
+          .toFile(mainPath);
+
+        // Story thumbnail
+        await sharp(filePath)
+          .resize(200, 360, { fit: 'cover' })
+          .webp({ quality: 60 })
+          .toFile(thumbPath);
+
+        this._cleanupTemp(filePath);
+
+        return {
+          url: toPublicUrl(mainPath),
+          thumbnailUrl: toPublicUrl(thumbPath),
+          filename,
+          width: mainInfo.width,
+          height: mainInfo.height,
+          fileSize: mainInfo.size,
+          format: 'webp',
+          resourceType: 'image',
+        };
+      }
+
+      // Video story
+      const ext = path.extname(filePath) || '.mp4';
+      const filename = generateFilename(ext);
+      const outputPath = path.join(UPLOAD_DIRS.stories, filename);
+
+      await fsp.rename(filePath, outputPath);
+      const { fileSize } = await getFileInfo(outputPath);
+
+      return {
+        url: toPublicUrl(outputPath),
+        filename,
+        fileSize,
+        format: ext.replace('.', ''),
+        resourceType: 'video',
+      };
     } catch (error) {
-      logger.error('Cloudinary delete error:', error.message);
+      this._cleanupTemp(filePath);
+      logger.error('Story upload error:', error.message);
+      throw ApiError.internal('Lỗi upload story');
     }
   }
 
+  // ─── STICKER ──────────────────────────────────────────────────────
+
   /**
-   * Clean up temp file
+   * Upload sticker — optimized small PNG/WebP
    */
-  cleanupTempFile(filePath) {
+  async uploadSticker(filePath) {
     try {
-      if (fs.existsSync(filePath)) {
+      const filename = generateFilename('.webp');
+      const outputPath = path.join(UPLOAD_DIRS.stickers, filename);
+
+      const info = await sharp(filePath)
+        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 80, effort: 6 })
+        .toFile(outputPath);
+
+      this._cleanupTemp(filePath);
+
+      return {
+        url: toPublicUrl(outputPath),
+        filename,
+        width: info.width,
+        height: info.height,
+        fileSize: info.size,
+        format: 'webp',
+      };
+    } catch (error) {
+      this._cleanupTemp(filePath);
+      logger.error('Sticker upload error:', error.message);
+      throw ApiError.internal('Lỗi upload sticker');
+    }
+  }
+
+  // ─── DELETE FILE ──────────────────────────────────────────────────
+
+  /**
+   * Delete a file by its public URL path (e.g. /uploads/avatars/xxx.webp)
+   */
+  async deleteFile(urlPath) {
+    try {
+      // Convert URL path → absolute file path
+      const relativePath = urlPath.replace(/^\/uploads\//, '');
+      const absolutePath = path.join(UPLOAD_BASE, relativePath);
+
+      // Security: prevent path traversal
+      if (!absolutePath.startsWith(UPLOAD_BASE)) {
+        throw ApiError.badRequest('Đường dẫn không hợp lệ');
+      }
+
+      if (fs.existsSync(absolutePath)) {
+        await fsp.unlink(absolutePath);
+        logger.info(`Deleted file: ${relativePath}`);
+      }
+
+      // Also try to delete thumbnail if exists
+      const dir = path.dirname(relativePath);
+      const basename = path.basename(relativePath);
+      const thumbPath = path.join(UPLOAD_BASE, dir, 'thumbs', basename);
+      if (fs.existsSync(thumbPath)) {
+        await fsp.unlink(thumbPath);
+        logger.info(`Deleted thumbnail: ${dir}/thumbs/${basename}`);
+      }
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      logger.error('File delete error:', error.message);
+    }
+  }
+
+  // ─── MULTIPLE FILES ───────────────────────────────────────────────
+
+  /**
+   * Upload multiple files — auto-detect type (image vs file)
+   */
+  async uploadMultiple(files) {
+    const results = [];
+
+    for (const file of files) {
+      const isImage = file.mimetype?.startsWith('image/');
+
+      if (isImage) {
+        const result = await this.uploadChatImage(file.path);
+        results.push(result);
+      } else {
+        const result = await this.uploadFile(file.path, file.originalname);
+        results.push(result);
+      }
+    }
+
+    return results;
+  }
+
+  // ─── UTILITY ──────────────────────────────────────────────────────
+
+  /**
+   * Clean up temporary file (silent fail)
+   */
+  _cleanupTemp(filePath) {
+    try {
+      if (filePath && fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
     } catch (error) {

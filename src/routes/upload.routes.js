@@ -33,16 +33,14 @@ router.post('/file', verifyToken, uploadLimiter, uploadFile, asyncHandler(async 
 
 router.post('/multiple', verifyToken, uploadLimiter, uploadMultiple, asyncHandler(async (req, res) => {
   if (!req.files?.length) throw ApiError.badRequest('Vui lòng chọn file');
-  const results = [];
-  for (const file of req.files) {
-    const result = await uploadService.uploadToCloudinary(file.path, { folder: 'alohi/chat/files' });
-    results.push(result);
-  }
+  const results = await uploadService.uploadMultiple(req.files);
   new ApiResponse(201, `Upload ${results.length} file thành công`, results).send(res);
 }));
 
-router.delete('/:publicId', verifyToken, asyncHandler(async (req, res) => {
-  await uploadService.deleteFromCloudinary(req.params.publicId);
+router.delete('/', verifyToken, asyncHandler(async (req, res) => {
+  const { url } = req.body;
+  if (!url) throw ApiError.badRequest('Thiếu URL file cần xóa');
+  await uploadService.deleteFile(url);
   new ApiResponse(200, 'Đã xóa file').send(res);
 }));
 

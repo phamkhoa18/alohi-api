@@ -6,7 +6,7 @@ const path = require('path');
 const app = require('./src/app');
 const { connectDB, disconnectDB } = require('./src/config/database');
 const { createRedisClient, disconnectRedis } = require('./src/config/redis');
-const { configureCloudinary } = require('./src/config/cloudinary');
+
 const { initFirebase } = require('./src/config/firebase');
 const { initSocket } = require('./src/socket');
 const logger = require('./src/utils/logger');
@@ -30,8 +30,7 @@ async function startServer() {
     // 2. Connect to Redis
     createRedisClient();
 
-    // 3. Configure Cloudinary
-    configureCloudinary();
+    // 3. Upload directories initialized automatically by upload.service.js
 
     // 4. Initialize Firebase (optional)
     initFirebase();

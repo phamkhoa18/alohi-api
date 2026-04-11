@@ -14,12 +14,17 @@
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down"
   },
-  "keywords": ["chat", "messaging", "zalo-clone", "socket.io", "local-first"],
+  "keywords": [
+    "chat",
+    "messaging",
+    "zalo-clone",
+    "socket.io",
+    "local-first"
+  ],
   "author": "Alohi Team",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "cloudinary": "^2.9.0",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",

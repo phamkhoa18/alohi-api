@@ -4,10 +4,11 @@ const crypto = require('crypto');
 const ApiError = require('../utils/ApiError');
 const { UPLOAD_LIMITS } = require('../config/constants');
 
-// Temp storage
+// Temp storage — files land here first, then upload.service.js moves them
+const tempDir = path.join(process.cwd(), 'uploads', 'temp');
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(process.cwd(), 'uploads'));
+    cb(null, tempDir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
