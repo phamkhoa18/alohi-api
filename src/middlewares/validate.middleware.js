@@ -24,16 +24,22 @@ const validate = (schema) => (req, res, next) => {
         });
       } else {
         // Replace with validated/sanitized values
-        req[key] = value;
+        // Express 5: req.query is getter-only, use Object.assign
+        if (key === 'query') {
+          Object.keys(req.query).forEach(k => delete req.query[k]);
+          Object.assign(req.query, value);
+        } else {
+          req[key] = value;
+        }
       }
     }
   });
 
   if (validationErrors.length > 0) {
-    throw ApiError.validationError(
+    return next(ApiError.validationError(
       'Dữ liệu không hợp lệ',
       validationErrors
-    );
+    ));
   }
 
   next();

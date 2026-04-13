@@ -140,10 +140,9 @@ userSchema.index({ status: 1 });
 userSchema.index({ 'fcmTokens.deviceId': 1 });
 
 // === Pre-save: hash password ===
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+userSchema.pre('save', async function () {
+  if (!this.isModified('password')) return;
   this.password = await bcrypt.hash(this.password, 12);
-  next();
 });
 
 // === Methods ===

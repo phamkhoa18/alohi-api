@@ -5,6 +5,7 @@ const validate = require('../middlewares/validate.middleware');
 const msgValidation = require('../validations/message.validation');
 const { messageLimiter } = require('../middlewares/rateLimit.middleware');
 
+router.get('/:conversationId', verifyToken, msgCtrl.getMessages);
 router.post('/:conversationId', verifyToken, messageLimiter, validate(msgValidation.sendMessage), msgCtrl.sendMessage);
 router.put('/:messageId/recall', verifyToken, msgCtrl.recallMessage);
 router.delete('/:messageId', verifyToken, msgCtrl.deleteMessage);

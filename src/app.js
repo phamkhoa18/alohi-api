@@ -3,8 +3,6 @@ const helmet = require('helmet');
 const cors = require('cors');
 const compression = require('compression');
 const morgan = require('morgan');
-const hpp = require('hpp');
-const mongoSanitize = require('express-mongo-sanitize');
 const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 
@@ -24,8 +22,31 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(hpp());
-app.use(mongoSanitize());
+
+// Custom mongo-sanitize (Express 5 compatible — req.query is getter-only)
+const sanitizeValue = (val) => {
+  if (typeof val === 'string') return val.replace(/[\$\.]/g, '');
+  if (Array.isArray(val)) return val.map(sanitizeValue);
+  if (val && typeof val === 'object') {
+    const cleaned = {};
+    for (const key of Object.keys(val)) {
+      if (!key.startsWith('$')) cleaned[key] = sanitizeValue(val[key]);
+    }
+    return cleaned;
+  }
+  return val;
+};
+app.use((req, _res, next) => {
+  if (req.body) req.body = sanitizeValue(req.body);
+  if (req.params) req.params = sanitizeValue(req.params);
+  // Express 5: req.query is getter-only, sanitize in-place
+  if (req.query && typeof req.query === 'object') {
+    for (const key of Object.keys(req.query)) {
+      req.query[key] = sanitizeValue(req.query[key]);
+    }
+  }
+  next();
+});
 
 // === Body Parsing ===
 app.use(express.json({ limit: '10mb' }));

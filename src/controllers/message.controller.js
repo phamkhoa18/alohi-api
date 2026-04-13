@@ -2,6 +2,41 @@ const messageService = require('../services/message.service');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/ApiResponse');
 const ApiError = require('../utils/ApiError');
+const MessageMetadata = require('../models/MessageMetadata');
+const Conversation = require('../models/Conversation');
+
+// @desc    Get messages in conversation
+// @route   GET /api/messages/:conversationId
+exports.getMessages = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
+  const { page = 1, limit = 50 } = req.query;
+  const parsedLimit = Math.min(parseInt(limit) || 50, 100);
+  const skip = (parseInt(page) - 1) * parsedLimit;
+
+  // Verify participant
+  const conversation = await Conversation.findById(conversationId);
+  if (!conversation || !conversation.isParticipant(req.user._id)) {
+    throw ApiError.forbidden('Không có quyền xem tin nhắn');
+  }
+
+  const messages = await MessageMetadata.find({
+    conversation: conversationId,
+    isRecalled: { $ne: true },
+    deletedFor: { $nin: [req.user._id] },
+  })
+    .populate('sender', 'displayName avatar isOnline')
+    .sort({ createdAt: 1 })
+    .skip(skip)
+    .limit(parsedLimit)
+    .lean();
+
+  const total = await MessageMetadata.countDocuments({
+    conversation: conversationId,
+    isRecalled: { $ne: true },
+  });
+
+  new ApiResponse(200, 'Success', { messages, total }).send(res);
+});
 
 // @desc    Send message (REST fallback)
 exports.sendMessage = asyncHandler(async (req, res) => {
