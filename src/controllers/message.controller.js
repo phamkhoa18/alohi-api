@@ -67,7 +67,19 @@ exports.sendMessage = asyncHandler(async (req, res) => {
   }
 
   const message = await messageService.processMessage(req.user._id, conversationId, req.body);
-  new ApiResponse(201, 'Đã gửi tin nhắn', message).send(res);
+  
+  // Populate sender object so Android Retrofit (Gson) doesn't crash expecting an object instead of string ID
+  const populatedMessage = {
+    ...message,
+    sender: {
+      _id: req.user._id,
+      displayName: req.user.displayName,
+      avatar: req.user.avatar,
+      isOnline: req.user.isOnline
+    }
+  };
+  
+  new ApiResponse(201, 'Đã gửi tin nhắn', populatedMessage).send(res);
 });
 
 // @desc    Recall message
