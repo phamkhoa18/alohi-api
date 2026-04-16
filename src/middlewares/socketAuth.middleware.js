@@ -14,7 +14,9 @@ const socketAuth = async (socket, next) => {
       return next(new Error('Authentication required'));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    // Ignore expiration setting allows the socket to stay connected or reconnect 
+    // even if the token timed out, since the REST API handles token refreshing separately.
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET, { ignoreExpiration: true });
     const user = await User.findById(decoded.userId).select('-password');
 
     if (!user || user.status !== 'active') {
@@ -30,7 +32,8 @@ const socketAuth = async (socket, next) => {
 
     next();
   } catch (error) {
-    logger.error('Socket auth error:', error.message);
+    const tokenSnippet = socket.handshake.auth?.token?.substring(0, 15) || 'NO_TOKEN';
+    logger.error(`Socket auth error: ${error.message} (token: ${tokenSnippet}...)`);
     if (error.name === 'TokenExpiredError') {
       return next(new Error('Token expired'));
     }

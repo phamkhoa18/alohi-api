@@ -12,6 +12,7 @@ router.get('/requests/count', verifyToken, friendCtrl.getRequestCount);
 router.put('/request/:requestId/accept', verifyToken, friendCtrl.acceptRequest);
 router.put('/request/:requestId/reject', verifyToken, friendCtrl.rejectRequest);
 router.delete('/request/:requestId', verifyToken, friendCtrl.cancelRequest);
+router.delete('/request/user/:userId', verifyToken, friendCtrl.cancelRequestByUserId);
 router.delete('/:userId', verifyToken, friendCtrl.unfriend);
 router.get('/suggestions', verifyToken, friendCtrl.getSuggestions);
 router.post('/sync-contacts', verifyToken, friendCtrl.syncContacts);

@@ -90,3 +90,34 @@ exports.deleteAccount = asyncHandler(async (req, res) => {
   await authService.deleteAccount(req.user._id);
   new ApiResponse(200, 'Tài khoản đã được xóa').send(res);
 });
+
+// @desc    Get Active Sessions
+// @route   GET /api/auth/sessions
+exports.getSessions = asyncHandler(async (req, res) => {
+  const DeviceSession = require('../models/DeviceSession');
+  const sessions = await DeviceSession.find({ user: req.user._id, isActive: true })
+    .select('-fcmToken')
+    .sort({ lastActiveAt: -1 });
+  new ApiResponse(200, 'Danh sách thiết bị đăng nhập', sessions).send(res);
+});
+
+// @desc    Logout specific session
+// @route   POST /api/auth/sessions/:id/logout
+exports.logoutSession = asyncHandler(async (req, res) => {
+  const DeviceSession = require('../models/DeviceSession');
+  const session = await DeviceSession.findOne({ _id: req.params.id, user: req.user._id });
+  if (!session) throw ApiError.notFound('Phiên đăng nhập không tồn tại');
+  
+  session.isActive = false;
+  session.logoutAt = new Date();
+  await session.save();
+
+  // Optionally remove the refresh token from the User document
+  const User = require('../models/User');
+  await User.updateOne(
+    { _id: req.user._id },
+    { $pull: { refreshTokens: { deviceId: session.deviceId } } }
+  );
+
+  new ApiResponse(200, 'Đã đăng xuất thiết bị').send(res);
+});

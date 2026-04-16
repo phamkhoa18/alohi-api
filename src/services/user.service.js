@@ -46,6 +46,22 @@ class UserService {
       }
 
       profile.isFriend = isFriend;
+      if (isFriend) {
+        profile.friendStatus = 'friend';
+      } else {
+        const FriendRequest = require('../models/FriendRequest');
+        const reqSent = await FriendRequest.findOne({ from: requesterId, to: userId, status: 'pending' });
+        if (reqSent) {
+          profile.friendStatus = 'sent';
+        } else {
+          const reqReceived = await FriendRequest.findOne({ from: userId, to: requesterId, status: 'pending' });
+          if (reqReceived) {
+            profile.friendStatus = 'received';
+          } else {
+            profile.friendStatus = 'none';
+          }
+        }
+      }
     }
 
     return profile;

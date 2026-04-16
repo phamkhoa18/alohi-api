@@ -12,8 +12,8 @@ const sendMessage = {
       fileName: Joi.string(),
       fileSize: Joi.number(),
       fileType: Joi.string(),
-      url: Joi.string().uri(),
-      thumbnailUrl: Joi.string().uri().allow(null),
+      url: Joi.string(),
+      thumbnailUrl: Joi.string().allow(null, ''),
       duration: Joi.number().allow(null),
       dimensions: Joi.object({
         width: Joi.number(),

@@ -27,8 +27,8 @@ exports.sendRequest = asyncHandler(async (req, res) => {
   const request = await friendService.sendRequest(
     req.user._id,
     req.params.userId,
-    req.body.message,
-    req.body.source
+    req.body?.message,
+    req.body?.source
   );
   new ApiResponse(201, 'Đã gửi lời mời kết bạn', request).send(res);
 });
@@ -67,6 +67,12 @@ exports.rejectRequest = asyncHandler(async (req, res) => {
 // @desc    Cancel sent request
 exports.cancelRequest = asyncHandler(async (req, res) => {
   await friendService.cancelRequest(req.params.requestId, req.user._id);
+  new ApiResponse(200, 'Đã hủy lời mời kết bạn').send(res);
+});
+
+// @desc    Cancel sent request by user ID
+exports.cancelRequestByUserId = asyncHandler(async (req, res) => {
+  await friendService.cancelRequestByUserId(req.user._id, req.params.userId);
   new ApiResponse(200, 'Đã hủy lời mời kết bạn').send(res);
 });
 

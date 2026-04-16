@@ -9,7 +9,7 @@ const notificationSchema = new Schema({
     type: String,
     enum: [
       'friend_request', 'friend_accepted', 'friend_rejected',
-      'new_message', 'missed_call',
+      'new_message', 'missed_call', 'incoming_call', 'call_ended',
       'group_invite', 'group_member_added', 'group_member_removed',
       'group_role_changed', 'group_join_request',
       'story_reaction', 'story_reply', 'story_mention',
@@ -23,15 +23,7 @@ const notificationSchema = new Schema({
   body: { type: String, required: true },
   imageUrl: String,
 
-  data: {
-    conversationId: Schema.Types.ObjectId,
-    messageId: String,
-    storyId: Schema.Types.ObjectId,
-    callId: String,
-    userId: Schema.Types.ObjectId,
-    friendRequestId: Schema.Types.ObjectId,
-    actionUrl: String,
-  },
+  data: { type: Schema.Types.Mixed, default: {} },
 
   // === Status ===
   isRead: { type: Boolean, default: false },

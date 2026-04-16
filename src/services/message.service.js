@@ -28,12 +28,15 @@ class MessageService {
     const preview = generateMessagePreview(messageData.type, messageData.content);
     const timestamp = new Date();
 
-    // Save metadata to MongoDB
+    // Save metadata to MongoDB (Now acts as standard permanent Message storage)
     await MessageMetadata.create({
       messageId,
       conversation: conversationId,
       sender: senderId,
       type: messageData.type,
+      content: messageData.content,
+      encryptedContent: messageData.encryptedContent,
+      attachments: messageData.attachments,
       preview: truncateText(preview, 100),
       createdAt: timestamp,
     });

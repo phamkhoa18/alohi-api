@@ -51,9 +51,27 @@ exports.removeOtherDevices = asyncHandler(async (req, res) => {
 });
 
 exports.updateFcmToken = asyncHandler(async (req, res) => {
+  const tokenToSave = req.body.token || req.body.fcmToken;
+
   await DeviceSession.findOneAndUpdate(
     { user: req.user._id, deviceId: req.params.deviceId },
-    { fcmToken: req.body.fcmToken }
+    { fcmToken: tokenToSave }
   );
+
+  const User = require('../models/User');
+  const user = await User.findById(req.user._id);
+  if (user) {
+    user.fcmTokens = user.fcmTokens || [];
+    user.fcmTokens = user.fcmTokens.filter(t => t.deviceId !== req.params.deviceId);
+    if (tokenToSave) {
+      user.fcmTokens.push({
+        token: tokenToSave,
+        deviceId: req.params.deviceId,
+        deviceType: req.body.deviceType || 'android'
+      });
+    }
+    await user.save();
+  }
+
   new ApiResponse(200, 'Đã cập nhật FCM token').send(res);
 });

@@ -4,6 +4,7 @@ const ApiResponse = require('../utils/ApiResponse');
 const ApiError = require('../utils/ApiError');
 const MessageMetadata = require('../models/MessageMetadata');
 const Conversation = require('../models/Conversation');
+const MessageQueue = require('../models/MessageQueue');
 
 // @desc    Get messages in conversation
 // @route   GET /api/messages/:conversationId
@@ -19,7 +20,7 @@ exports.getMessages = asyncHandler(async (req, res) => {
     throw ApiError.forbidden('Không có quyền xem tin nhắn');
   }
 
-  const messages = await MessageMetadata.find({
+  const messagesMeta = await MessageMetadata.find({
     conversation: conversationId,
     isRecalled: { $ne: true },
     deletedFor: { $nin: [req.user._id] },
@@ -29,6 +30,20 @@ exports.getMessages = asyncHandler(async (req, res) => {
     .skip(skip)
     .limit(parsedLimit)
     .lean();
+
+  // Merge content from MessageQueue (kept for 30 days securely)
+  const metaIds = messagesMeta.map(m => m.messageId);
+  const queueDocs = await MessageQueue.find({ messageId: { $in: metaIds } }).lean();
+
+  const messages = messagesMeta.map(meta => {
+    const q = queueDocs.find(doc => doc.messageId === meta.messageId);
+    return {
+      ...meta,
+      content: meta.content || (q ? q.content : meta.preview), // Native content first, queue fallback, preview last
+      attachments: (meta.attachments && meta.attachments.length > 0) ? meta.attachments : (q ? q.attachments : []),
+      encryptedContent: meta.encryptedContent || (q ? q.encryptedContent : null),
+    };
+  });
 
   const total = await MessageMetadata.countDocuments({
     conversation: conversationId,

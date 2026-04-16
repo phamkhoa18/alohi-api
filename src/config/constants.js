@@ -128,7 +128,7 @@ module.exports = {
   // === Notification Types ===
   NOTIFICATION_TYPES: [
     'friend_request', 'friend_accepted', 'friend_rejected',
-    'new_message', 'missed_call',
+    'new_message', 'missed_call', 'incoming_call', 'call_ended',
     'group_invite', 'group_member_added', 'group_member_removed',
     'group_role_changed', 'group_join_request',
     'story_reaction', 'story_reply', 'story_mention',

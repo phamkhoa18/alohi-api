@@ -8,7 +8,7 @@ const callLogSchema = new Schema({
   caller: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   receiver: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 
-  type: { type: String, enum: ['voice', 'video'], required: true },
+  type: { type: String, enum: ['voice', 'video', 'audio'], required: true },
 
   status: {
     type: String,

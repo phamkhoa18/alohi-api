@@ -53,9 +53,35 @@ class FriendService {
       source,
     });
 
+    const populatedRequest = await FriendRequest.findById(request._id).populate('from', 'displayName avatar bio gender status onlineStatus');
+
+    try {
+      const io = require('../socket').getIO();
+      if (io) {
+        io.to(`user:${toUserId}`).emit('friend:request_received', populatedRequest);
+      }
+    } catch (e) {
+      logger.error('Error emitting friend:request_received', e);
+    }
+    
+    // Call FCM Push
+    try {
+      const notificationService = require('./notification.service');
+      await notificationService.create({
+        recipientId: toUserId,
+        senderId: fromUserId,
+        type: 'friend_request',
+        title: 'Lời mời kết bạn mới',
+        body: `${populatedRequest.from.displayName} đã gửi lời mời kết bạn.`,
+        data: { requestId: request._id.toString(), fromUserId: fromUserId.toString() }
+      });
+    } catch (e) {
+      logger.error('FCM error in sendRequest', e);
+    }
+
     logger.info(`Friend request sent: ${fromUserId} → ${toUserId}`);
 
-    return request;
+    return populatedRequest;
   }
 
   /**
@@ -107,6 +133,30 @@ class FriendService {
       });
     }
 
+    try {
+      const io = require('../socket').getIO();
+      if (io) {
+        io.to(`user:${request.from}`).emit('friend:request_accepted', { requestId, toUser: request.to });
+        io.to(`user:${request.to}`).emit('friend:request_accepted', { requestId, fromUser: request.from });
+      }
+    } catch (e) {}
+    
+    // Call FCM Push
+    try {
+      const notificationService = require('./notification.service');
+      const toUserDoc = await User.findById(request.to);
+      await notificationService.create({
+        recipientId: request.from,
+        senderId: request.to,
+        type: 'friend_accepted',
+        title: 'Kết bạn thành công',
+        body: `${toUserDoc.displayName} đã chấp nhận lời mời kết bạn.`,
+        data: { requestId: request._id.toString(), userId: request.to.toString() }
+      });
+    } catch (e) {
+      logger.error('FCM error in acceptRequest', e);
+    }
+
     logger.info(`Friend request accepted: ${request.from} ↔ ${request.to}`);
 
     return { request, conversation };
@@ -129,6 +179,13 @@ class FriendService {
     request.respondedAt = new Date();
     await request.save();
 
+    try {
+      const io = require('../socket').getIO();
+      if (io) {
+        io.to(`user:${request.from}`).emit('friend:request_rejected', { requestId });
+      }
+    } catch (e) {}
+
     return request;
   }
 
@@ -144,6 +201,19 @@ class FriendService {
     if (request.status !== 'pending') {
       throw ApiError.badRequest('Lời mời đã được xử lý');
     }
+
+    request.status = 'cancelled';
+    await request.save();
+
+    return request;
+  }
+
+  /**
+   * Cancel a sent friend request by User ID
+   */
+  async cancelRequestByUserId(fromUserId, toUserId) {
+    const request = await FriendRequest.findOne({ from: fromUserId, to: toUserId, status: 'pending' });
+    if (!request) throw ApiError.notFound('Lời mời không tồn tại');
 
     request.status = 'cancelled';
     await request.save();

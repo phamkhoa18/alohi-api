@@ -16,5 +16,7 @@ router.post('/forgot-password', authOtpLimiter, validate(authValidation.forgotPa
 router.post('/reset-password', validate(authValidation.resetPassword), authCtrl.resetPassword);
 router.put('/change-password', verifyToken, validate(authValidation.changePassword), authCtrl.changePassword);
 router.delete('/delete-account', verifyToken, authCtrl.deleteAccount);
+router.get('/sessions', verifyToken, authCtrl.getSessions);
+router.post('/sessions/:id/logout', verifyToken, authCtrl.logoutSession);
 
 module.exports = router;

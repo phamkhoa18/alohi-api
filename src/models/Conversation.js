@@ -30,9 +30,10 @@ const conversationSchema = new Schema({
     customNotificationSound: String,
 
     // === Sync markers ===
-    lastReadMessageId: { type: Schema.Types.ObjectId },
+    lastReadMessageId: { type: String },
     lastReadAt: { type: Date, default: Date.now },
-    lastDeliveredMessageId: { type: Schema.Types.ObjectId },
+    lastDeliveredMessageId: { type: String },
+    lastDeliveredAt: { type: Date, default: Date.now },
     unreadCount: { type: Number, default: 0 },
 
     // === Deletion ===
@@ -42,7 +43,7 @@ const conversationSchema = new Schema({
 
   // === Last message preview (cho conversation list) ===
   lastMessage: {
-    _id: Schema.Types.ObjectId,
+    _id: String,
     sender: { type: Schema.Types.ObjectId, ref: 'User' },
     type: String,
     preview: String,

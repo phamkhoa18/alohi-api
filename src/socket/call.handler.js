@@ -3,6 +3,49 @@ const { REDIS_KEYS, TIMEOUTS } = require('../config/constants');
 const CallLog = require('../models/CallLog');
 const { generateCallId } = require('../utils/helpers');
 const logger = require('../utils/logger');
+const notificationService = require('../services/notification.service');
+const Conversation = require('../models/Conversation');
+const messageService = require('../services/message.service');
+
+async function injectCallLogToChat(io, callData, status, duration = 0) {
+  try {
+    const isMissed = ['no_answer', 'rejected', 'cancelled'].includes(status);
+    const conv = await Conversation.findOne({
+      type: 'private',
+      'participants.user': { $all: [callData.callerId, callData.receiverId] }
+    });
+    
+    if (conv) {
+      const payload = {
+        type: 'call',
+        content: JSON.stringify({
+          callId: callData.callId,
+          type: callData.type,
+          status,
+          duration,
+          isMissed
+        })
+      };
+      const message = await messageService.processMessage(callData.callerId, conv._id.toString(), payload);
+      
+      const broadcastData = {
+        messageId: message.messageId,
+        conversationId: conv._id.toString(),
+        sender: { _id: callData.callerId },
+        type: 'call',
+        content: payload.content,
+        preview: message.preview,
+        timestamp: message.timestamp,
+      };
+      
+      io.to(`user:${callData.receiverId}`).emit('message:receive', broadcastData);
+      io.to(`user:${callData.callerId}`).emit('message:receive', broadcastData);
+    }
+  } catch(e) {
+    logger.error('injectCallLogToChat error:', e);
+  }
+}
+
 
 module.exports = (io, socket) => {
   const userId = socket.userId;
@@ -12,6 +55,9 @@ module.exports = (io, socket) => {
     try {
       const redis = getRedis();
       callId = callId || generateCallId();
+
+      // Normalize: Android sends "audio", CallLog expects "voice"
+      if (type === 'audio') type = 'voice';
 
       // Check if receiver is busy
       const activeCall = await redis.get(REDIS_KEYS.USER_ACTIVE_CALL(receiverId));
@@ -36,7 +82,7 @@ module.exports = (io, socket) => {
       await redis.set(REDIS_KEYS.USER_ACTIVE_CALL(userId), callId, 'EX', 120);
       await redis.set(REDIS_KEYS.USER_ACTIVE_CALL(receiverId), callId, 'EX', 120);
 
-      // Send to receiver
+      // Send to receiver via socket
       io.to(`user:${receiverId}`).emit('call:incoming', {
         callId,
         caller: {
@@ -48,30 +94,59 @@ module.exports = (io, socket) => {
         sdpOffer,
       });
 
-      // Set timeout (30s)
-      setTimeout(async () => {
-        const callData = await redis.hgetall(REDIS_KEYS.CALL(callId));
-        if (callData && callData.status === 'ringing') {
-          // No answer
-          io.to(`user:${userId}`).emit('call:timeout', { callId });
-          io.to(`user:${receiverId}`).emit('call:timeout', { callId });
-
-          // Cleanup
-          await redis.del(REDIS_KEYS.CALL(callId));
-          await redis.del(REDIS_KEYS.USER_ACTIVE_CALL(userId));
-          await redis.del(REDIS_KEYS.USER_ACTIVE_CALL(receiverId));
-
-          // Save call log
-          await CallLog.create({
+      // Send FCM push notification (WAKES UP background/killed Android devices)
+      // Wrapped in its own try/catch so notification failure doesn't break call flow
+      try {
+        await notificationService.create({
+          recipientId: receiverId,
+          senderId: userId,
+          type: 'incoming_call',
+          title: socket.user.displayName,
+          body: type === 'video' ? 'Cuộc gọi video đến' : 'Cuộc gọi thoại đến',
+          imageUrl: socket.user.avatar?.thumbnailUrl,
+          data: {
+            action: 'incoming_call',
             callId,
-            caller: userId,
-            receiver: receiverId,
             type,
-            status: 'no_answer',
-            startedAt: new Date(parseInt(callData.startedAt)),
-            endedAt: new Date(),
-            endReason: 'timeout',
-          });
+            callerId: userId,
+            callerName: socket.user.displayName,
+            callerAvatar: socket.user.avatar?.thumbnailUrl || '',
+            // NOTE: sdpOffer excluded — exceeds FCM 4KB limit, already sent via socket
+          },
+        });
+      } catch (notifErr) {
+        logger.error('call:initiate notification error (non-fatal):', notifErr.message);
+      }
+
+      // Set timeout (30s) — wrapped in try/catch to prevent unhandled rejection
+      setTimeout(async () => {
+        try {
+          const callData = await redis.hgetall(REDIS_KEYS.CALL(callId));
+          if (callData && callData.status === 'ringing') {
+            // No answer
+            io.to(`user:${userId}`).emit('call:timeout', { callId });
+            io.to(`user:${receiverId}`).emit('call:timeout', { callId });
+
+            // Cleanup
+            await redis.del(REDIS_KEYS.CALL(callId));
+            await redis.del(REDIS_KEYS.USER_ACTIVE_CALL(userId));
+            await redis.del(REDIS_KEYS.USER_ACTIVE_CALL(receiverId));
+
+            // Save call log
+            await CallLog.create({
+              callId,
+              caller: userId,
+              receiver: receiverId,
+              type,
+              status: 'no_answer',
+              startedAt: new Date(parseInt(callData.startedAt)),
+              endedAt: new Date(),
+              endReason: 'timeout',
+            });
+            await injectCallLogToChat(io, callData, 'no_answer');
+          }
+        } catch (timeoutErr) {
+          logger.error('call:timeout handler error:', timeoutErr);
         }
       }, TIMEOUTS.CALL_RING);
 
@@ -127,6 +202,7 @@ module.exports = (io, socket) => {
         endedAt: new Date(),
         endReason: 'receiver_reject',
       });
+      await injectCallLogToChat(io, callData, 'rejected');
     } catch (error) {
       logger.error('call:reject error:', error);
     }
@@ -155,6 +231,7 @@ module.exports = (io, socket) => {
         endedAt: new Date(),
         endReason: 'caller_cancel',
       });
+      await injectCallLogToChat(io, callData, 'cancelled');
     } catch (error) {
       logger.error('call:cancel error:', error);
     }
@@ -192,6 +269,7 @@ module.exports = (io, socket) => {
         duration: duration || 0,
         endReason: 'normal',
       });
+      await injectCallLogToChat(io, callData, 'answered', duration);
     } catch (error) {
       logger.error('call:end error:', error);
     }

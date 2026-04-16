@@ -5,8 +5,21 @@ const messageMetadataSchema = new Schema({
   messageId: { type: String, required: true, unique: true },
   conversation: { type: Schema.Types.ObjectId, ref: 'Conversation', required: true },
   sender: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  type: String,
+  type: { type: String, default: 'text' },
+  content: String,
+  encryptedContent: String,
   preview: { type: String, maxlength: 100 },
+  
+  attachments: [{
+    fileName: String,
+    fileSize: Number,
+    fileType: String,
+    url: String,
+    thumbnailUrl: String,
+    duration: Number,
+    dimensions: { width: Number, height: Number },
+  }],
+
   isRecalled: { type: Boolean, default: false },
   recalledAt: Date,
 
