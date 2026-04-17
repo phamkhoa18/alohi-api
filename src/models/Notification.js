@@ -12,7 +12,7 @@ const notificationSchema = new Schema({
       'new_message', 'missed_call', 'incoming_call', 'call_ended',
       'group_invite', 'group_member_added', 'group_member_removed',
       'group_role_changed', 'group_join_request',
-      'story_reaction', 'story_reply', 'story_mention',
+      'story', 'story_reaction', 'story_reply', 'story_mention',
       'mention_in_chat',
       'system_update', 'security_alert',
     ],

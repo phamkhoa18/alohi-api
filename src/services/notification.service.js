@@ -51,13 +51,11 @@ class NotificationService {
         if (admin.apps?.length > 0) {
           await admin.messaging().sendEachForMulticast({
             tokens,
-            notification: {
-              title: notification.title,
-              body: notification.body,
-              imageUrl: notification.imageUrl,
-            },
             data: {
               type: notification.type,
+              title: notification.title || '',
+              body: notification.body || '',
+              imageUrl: notification.imageUrl || '',
               ...Object.fromEntries(
                 Object.entries(notification.data || {})
                   .filter(([_, v]) => v != null)

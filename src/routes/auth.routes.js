@@ -5,6 +5,7 @@ const validate = require('../middlewares/validate.middleware');
 const authValidation = require('../validations/auth.validation');
 const { authOtpLimiter, authLoginLimiter, authRegisterLimiter } = require('../middlewares/rateLimit.middleware');
 
+router.post('/check-phone', authCtrl.checkPhone);
 router.post('/send-otp', authOtpLimiter, validate(authValidation.sendOtp), authCtrl.sendOTP);
 router.post('/verify-otp', validate(authValidation.verifyOtp), authCtrl.verifyOTP);
 router.post('/register', authRegisterLimiter, validate(authValidation.register), authCtrl.register);

@@ -4,6 +4,24 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/ApiResponse');
 const ApiError = require('../utils/ApiError');
 
+// @desc    Check Phone
+// @route   POST /api/auth/check-phone
+exports.checkPhone = asyncHandler(async (req, res) => {
+  const { phone } = req.body;
+  const User = require('../models/User');
+  const { sanitizePhone } = require('../utils/helpers');
+  const user = await User.findOne({ phone: sanitizePhone(phone) });
+  
+  if (!user) {
+    throw ApiError.notFound('Tài khoản chưa tồn tại');
+  }
+  
+  new ApiResponse(200, 'Tài khoản hợp lệ', {
+    displayName: user.displayName,
+    avatar: user.avatar
+  }).send(res);
+});
+
 // @desc    Send OTP
 // @route   POST /api/auth/send-otp
 exports.sendOTP = asyncHandler(async (req, res) => {
@@ -63,8 +81,8 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
 // @desc    Reset Password
 // @route   POST /api/auth/reset-password
 exports.resetPassword = asyncHandler(async (req, res) => {
-  const { phone, otpCode, newPassword } = req.body;
-  await otpService.verifyOTP(phone, otpCode);
+  const { phone, newPassword } = req.body;
+  // await otpService.verifyOTP(phone, otpCode); // Handled by OtpScreen
 
   const User = require('../models/User');
   const user = await User.findOne({ phone: require('../utils/helpers').sanitizePhone(phone) });

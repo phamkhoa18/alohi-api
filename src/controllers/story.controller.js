@@ -16,6 +16,7 @@ exports.getStoryFeed = asyncHandler(async (req, res) => {
     expiresAt: { $gt: new Date() },
   })
     .populate('author', 'displayName avatar')
+    .populate('viewers.user', 'displayName avatar')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -27,16 +28,19 @@ exports.getStoryFeed = asyncHandler(async (req, res) => {
       grouped[authorId] = {
         author: story.author,
         stories: [],
-        hasUnviewed: false,
+        hasUnread: false,
       };
     }
     grouped[authorId].stories.push(story);
     if (!story.viewers?.some(v => v.user?.toString() === req.user._id.toString())) {
-      grouped[authorId].hasUnviewed = true;
+      grouped[authorId].hasUnread = true;
     }
   });
+  const allGroups = Object.values(grouped);
+  const myStories = allGroups.filter(g => g.author._id.toString() === req.user._id.toString());
+  const friendsStories = allGroups.filter(g => g.author._id.toString() !== req.user._id.toString());
 
-  new ApiResponse(200, 'Success', Object.values(grouped)).send(res);
+  new ApiResponse(200, 'Success', { myStories, friendsStories }).send(res);
 });
 
 // @desc    Get my stories
@@ -45,7 +49,9 @@ exports.getMyStories = asyncHandler(async (req, res) => {
     author: req.user._id,
     isActive: true,
     expiresAt: { $gt: new Date() },
-  }).sort({ createdAt: -1 });
+  }).populate('author', 'displayName avatar')
+    .populate('viewers.user', 'displayName avatar')
+    .sort({ createdAt: -1 });
 
   new ApiResponse(200, 'Success', stories).send(res);
 });
@@ -68,15 +74,62 @@ exports.createStory = asyncHandler(async (req, res) => {
     };
   }
 
-  if (req.file) {
-    const media = await uploadService.uploadStoryMedia(req.file.path, req.body.type);
+  if (req.files && req.files.media && req.files.media[0]) {
+    const media = await uploadService.uploadStoryMedia(req.files.media[0].path, req.body.type);
     storyData.media = media;
+  }
+
+  if (req.files && req.files.music && req.files.music[0]) {
+    const musicFile = req.files.music[0];
+    const musicUpload = await uploadService.uploadAudio(musicFile.path);
+    storyData.music = {
+      name: musicFile.originalname,
+      url: musicUpload.url
+    };
   }
 
   if (req.body.allowedUsers) storyData.allowedUsers = JSON.parse(req.body.allowedUsers);
   if (req.body.excludedUsers) storyData.excludedUsers = JSON.parse(req.body.excludedUsers);
 
   const story = await Story.create(storyData);
+  await story.populate('author', 'displayName avatar');
+
+  // Send Push Notification to friends
+  try {
+    const User = require('../models/User');
+    const notificationService = require('../services/notification.service');
+    
+    // Get sender info and friends
+    const authorPopulated = await User.findById(req.user._id).select('displayName friends');
+    
+    if (authorPopulated && authorPopulated.friends && authorPopulated.friends.length > 0) {
+      const friends = authorPopulated.friends;
+      
+      const title = 'Story mới';
+      const body = `${authorPopulated.displayName} vừa đăng một tin mới.`;
+      
+      // Async fire and forget
+      friends.forEach(friendId => {
+        notificationService.create({
+          recipientId: friendId,
+          senderId: req.user._id,
+          type: 'story',
+          title: title,
+          body: body,
+          data: {
+            authorId: req.user._id.toString(),
+            storyId: story._id.toString()
+          }
+        }).catch(err => {
+          // Ignore individual notification fail
+          console.error("Story Notification error:", err.message);
+        });
+      });
+    }
+  } catch (err) {
+    console.error("Failed to send story notifications", err);
+  }
+
   new ApiResponse(201, 'Đã đăng story', story).send(res);
 });
 

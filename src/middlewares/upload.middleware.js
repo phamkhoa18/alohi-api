@@ -28,7 +28,13 @@ const fileFilter = (allowedTypes) => (req, file, cb) => {
   if (!allowedTypes) {
     return cb(null, true); // Allow all
   }
-  if (allowedTypes.includes(file.mimetype)) {
+  
+  const isGenericImage = file.mimetype === 'image/*' && allowedTypes.some(t => t.startsWith('image/'));
+  const isGenericVideo = file.mimetype === 'video/*' && allowedTypes.some(t => t.startsWith('video/'));
+  const isGenericAudio = file.mimetype === 'audio/*' && allowedTypes.some(t => t.startsWith('audio/'));
+  const isOctetStream = file.mimetype === 'application/octet-stream';
+
+  if (allowedTypes.includes(file.mimetype) || isGenericImage || isGenericVideo || isGenericAudio || isOctetStream) {
     cb(null, true);
   } else {
     cb(new ApiError(400, `Định dạng file không hỗ trợ: ${file.mimetype}`), false);
@@ -82,8 +88,11 @@ const uploadMultiple = multer({
 const uploadStory = multer({
   storage,
   limits: { fileSize: UPLOAD_LIMITS.STORY_VIDEO },
-  fileFilter: fileFilter([...ALLOWED_MIMES.image, ...ALLOWED_MIMES.video]),
-}).single('media');
+  fileFilter: fileFilter([...ALLOWED_MIMES.image, ...ALLOWED_MIMES.video, ...ALLOWED_MIMES.audio]),
+}).fields([
+  { name: 'media', maxCount: 1 },
+  { name: 'music', maxCount: 1 }
+]);
 
 // Multer error handler wrapper
 const handleUpload = (uploadFn) => (req, res, next) => {
