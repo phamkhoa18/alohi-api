@@ -4,9 +4,9 @@ const createGroup = {
   body: Joi.object({
     name: Joi.string().min(1).max(100).trim().required()
       .messages({ 'any.required': 'Tên nhóm là bắt buộc' }),
-    members: Joi.array().items(Joi.string()).min(2).required()
+    members: Joi.array().items(Joi.string()).min(1).required()
       .messages({
-        'array.min': 'Nhóm cần ít nhất 3 thành viên (bao gồm bạn)',
+        'array.min': 'Nhóm cần ít nhất 2 thành viên (bao gồm bạn)',
       }),
     description: Joi.string().max(500).allow(''),
   }),
