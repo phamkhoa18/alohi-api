@@ -10,7 +10,7 @@ const errorHandler = (err, req, res, next) => {
   error.stack = err.stack;
 
   // Log error
-  if (err.statusCode !== 404) {
+  if (err.statusCode !== 404 && err.statusCode !== 401) {
     logger.error(`${err.message}`, {
       method: req.method,
       url: req.originalUrl,
@@ -18,6 +18,9 @@ const errorHandler = (err, req, res, next) => {
       userId: req.user?._id,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     });
+  } else if (err.statusCode === 401) {
+    // Just log a simple warning for 401s without polluting console with stack traces
+    logger.warn(`Auth: ${err.message} [${req.method} ${req.originalUrl}]`);
   }
 
   // Mongoose bad ObjectId

@@ -13,8 +13,28 @@ class MessageService {
    */
   async processMessage(senderId, conversationId, messageData) {
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation || !conversation.isParticipant(senderId)) {
-      throw ApiError.forbidden('Không có quyền gửi tin nhắn trong hội thoại này');
+    if (!conversation) {
+      throw ApiError.forbidden('Hội thoại không tồn tại (' + conversationId + ')');
+    }
+    if (!conversation.isParticipant(senderId)) {
+      const pList = conversation.participants.map(p => p.user ? p.user.toString() : 'null').join(', ');
+      throw ApiError.forbidden('Không có quyền gửi tin nhắn, bị xóa hoặc không thuộc hội thoại (Conv:' + conversationId + ', Sender:' + senderId + ', Participants:[' + pList + '])');
+    }
+
+    if (conversation.type === 'private') {
+      const otherParticipant = conversation.participants.find(p => p.user && p.user.toString() !== senderId.toString());
+      if (otherParticipant) {
+        const User = require('../models/User'); // inline require to avoid circular dep if needed
+        const sender = await User.findById(senderId).select('blockedUsers');
+        const receiver = await User.findById(otherParticipant.user).select('blockedUsers');
+        
+        if (sender && sender.blockedUsers && sender.blockedUsers.includes(otherParticipant.user.toString())) {
+          throw ApiError.forbidden('Bạn đã chặn người dùng này');
+        }
+        if (receiver && receiver.blockedUsers && receiver.blockedUsers.includes(senderId.toString())) {
+          throw ApiError.forbidden('Bạn đã bị chặn bởi người này');
+        }
+      }
     }
 
     // Check group settings

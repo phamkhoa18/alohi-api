@@ -107,10 +107,29 @@ const initSocket = (httpServer) => {
         if (since) query.updatedAt = { $gt: new Date(since) };
 
         const conversations = await Conversation.find(query)
-          .populate('participants.user', 'displayName avatar isOnline')
+          .populate('participants.user', 'displayName avatar isOnline lastSeen')
           .populate('lastMessage.sender', 'displayName')
           .sort({ updatedAt: -1 })
-          .limit(limit || 50);
+          .limit(limit || 50)
+          .lean();
+
+        const userIds = [...new Set(conversations.flatMap(c => c.participants.map(p => p.user?._id?.toString()).filter(Boolean)))];
+        if (userIds.length > 0) {
+          const presenceStats = await presenceService.getPresenceBatch(userIds);
+          const presenceMap = {};
+          presenceStats.forEach(p => { presenceMap[p.id] = p; });
+
+          conversations.forEach(c => {
+            c.participants.forEach(p => {
+              if (p.user && presenceMap[p.user._id.toString()]) {
+                p.user.isOnline = presenceMap[p.user._id.toString()].isOnline;
+                if (presenceMap[p.user._id.toString()].lastSeen) {
+                  p.user.lastSeen = presenceMap[p.user._id.toString()].lastSeen;
+                }
+              }
+            });
+          });
+        }
 
         socket.emit('sync:conversations_result', {
           conversations,

@@ -2,6 +2,7 @@ const Conversation = require('../models/Conversation');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/ApiResponse');
 const ApiError = require('../utils/ApiError');
+const presenceService = require('../services/presence.service');
 
 // @desc    Get conversation list
 exports.getConversations = asyncHandler(async (req, res) => {
@@ -30,6 +31,47 @@ exports.getConversations = asyncHandler(async (req, res) => {
 
   const hasMore = conversations.length > parsedLimit;
   const results = hasMore ? conversations.slice(0, parsedLimit) : conversations;
+  
+  // Inject real-time presence from Redis to fix zombie online status from MongoDB
+  const userIds = [...new Set(results.flatMap(c => c.participants.map(p => p.user?._id?.toString()).filter(Boolean)))];
+  if (userIds.length > 0) {
+    const presenceStats = await presenceService.getPresenceBatch(userIds);
+    const presenceMap = {};
+    presenceStats.forEach(p => { presenceMap[p.id] = p; });
+
+    results.forEach(c => {
+      c.participants.forEach(p => {
+        if (p.user && presenceMap[p.user._id.toString()]) {
+          p.user.isOnline = presenceMap[p.user._id.toString()].isOnline;
+          if (presenceMap[p.user._id.toString()].lastSeen) {
+            p.user.lastSeen = presenceMap[p.user._id.toString()].lastSeen;
+          }
+        }
+      });
+    });
+  }
+
+  // Inject blocked status so frontend knows if we are blocked
+  const targetUserIds = results.flatMap(c => c.participants.map(p => p.user && p.user._id ? p.user._id.toString() : null).filter(Boolean));
+  if (targetUserIds.length > 0) {
+      const User = require('../models/User');
+      const targetUsers = await User.find({ _id: { $in: targetUserIds } }).select('blockedUsers');
+      const targetUserBlockMap = {};
+      targetUsers.forEach(u => {
+          targetUserBlockMap[u._id.toString()] = u.blockedUsers.map(b => b.toString());
+      });
+
+      results.forEach(c => {
+          c.participants.forEach(p => {
+              if (p.user && p.user._id) {
+                  // Attach a custom field hasBlockedMe to the user to signify if the current user is blocked
+                  const theirBlockedList = targetUserBlockMap[p.user._id.toString()] || [];
+                  p.user.hasBlockedMe = theirBlockedList.includes(userId.toString());
+              }
+          });
+      });
+  }
+
   const nextCursor = hasMore && results.length > 0
     ? results[results.length - 1].updatedAt.toISOString()
     : null;
@@ -77,7 +119,42 @@ exports.getConversation = asyncHandler(async (req, res) => {
     throw ApiError.notFound('Hội thoại không tồn tại');
   }
 
-  new ApiResponse(200, 'Success', conversation).send(res);
+  if (conversation.participants) {
+    const userIds = conversation.participants.map(p => p.user?._id?.toString()).filter(Boolean);
+    if (userIds.length > 0) {
+      const presenceStats = await presenceService.getPresenceBatch(userIds);
+      const presenceMap = {};
+      presenceStats.forEach(p => { presenceMap[p.id] = p; });
+
+      conversation.participants.forEach(p => {
+        if (p.user && presenceMap[p.user._id.toString()]) {
+          p.user.isOnline = presenceMap[p.user._id.toString()].isOnline;
+          if (presenceMap[p.user._id.toString()].lastSeen) {
+            p.user.lastSeen = presenceMap[p.user._id.toString()].lastSeen;
+          }
+        }
+      });
+      
+      const User = require('../models/User');
+      const targetUsers = await User.find({ _id: { $in: userIds } }).select('blockedUsers');
+      const targetUserBlockMap = {};
+      targetUsers.forEach(u => {
+          targetUserBlockMap[u._id.toString()] = u.blockedUsers.map(b => b.toString());
+      });
+      
+      conversation.participants.forEach(p => {
+          if (p.user && p.user._id) {
+              const theirBlockedList = targetUserBlockMap[p.user._id.toString()] || [];
+              const rawObj = p.user.toJSON ? p.user.toJSON() : p.user;
+              rawObj.hasBlockedMe = theirBlockedList.includes(req.user._id.toString());
+              if (p.user.set) p.user.set('hasBlockedMe', rawObj.hasBlockedMe, { strict: false });
+          }
+      });
+    }
+  }
+
+  const payload = conversation.toJSON ? conversation.toJSON() : conversation;
+  new ApiResponse(200, 'Success', payload).send(res);
 });
 
 // @desc    Create/open 1-1 conversation
@@ -122,7 +199,7 @@ exports.createConversation = asyncHandler(async (req, res) => {
 
 // @desc    Mute conversation
 exports.muteConversation = asyncHandler(async (req, res) => {
-  const { duration } = req.body; // ms, null = forever
+  const { duration } = req.body || {}; // ms, null = forever
   const mutedUntil = duration ? new Date(Date.now() + duration) : null;
 
   await Conversation.updateOne(

@@ -77,12 +77,12 @@ module.exports = {
     AVATAR: 5 * 1024 * 1024,         // 5 MB
     COVER_PHOTO: 10 * 1024 * 1024,    // 10 MB
     CHAT_IMAGE: 10 * 1024 * 1024,     // 10 MB
-    CHAT_VIDEO: 50 * 1024 * 1024,     // 50 MB
-    VOICE_MESSAGE: 10 * 1024 * 1024,  // 10 MB
-    FILE: 100 * 1024 * 1024,          // 100 MB
-    STORY_IMAGE: 10 * 1024 * 1024,    // 10 MB
-    STORY_VIDEO: 30 * 1024 * 1024,    // 30 MB
-    STICKER: 512 * 1024,              // 512 KB
+    CHAT_VIDEO: 500 * 1024 * 1024,    // 500 MB
+    VOICE_MESSAGE: 20 * 1024 * 1024,  // 20 MB
+    FILE: 200 * 1024 * 1024,          // 200 MB
+    STORY_IMAGE: 20 * 1024 * 1024,    // 20 MB
+    STORY_VIDEO: 200 * 1024 * 1024,   // 200 MB
+    STICKER: 1024 * 1024,             // 1 MB
   },
 
   // === Timeouts (ms) ===

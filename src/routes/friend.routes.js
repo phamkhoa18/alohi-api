@@ -10,6 +10,7 @@ router.get('/requests/received', verifyToken, friendCtrl.getReceivedRequests);
 router.get('/requests/sent', verifyToken, friendCtrl.getSentRequests);
 router.get('/requests/count', verifyToken, friendCtrl.getRequestCount);
 router.put('/request/:requestId/accept', verifyToken, friendCtrl.acceptRequest);
+router.put('/request/user/:userId/accept', verifyToken, friendCtrl.acceptRequestByUserId);
 router.put('/request/:requestId/reject', verifyToken, friendCtrl.rejectRequest);
 router.delete('/request/:requestId', verifyToken, friendCtrl.cancelRequest);
 router.delete('/request/user/:userId', verifyToken, friendCtrl.cancelRequestByUserId);

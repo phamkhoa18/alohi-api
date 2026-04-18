@@ -36,10 +36,21 @@ class NotificationService {
       const muteUntil = user.settings?.notification?.muteUntil;
       if (muteUntil && muteUntil > new Date()) return;
 
-      // Check if user is in foreground (skip push)
-      const redis = getRedis();
-      const isForeground = await redis.get(`user:${userId}:appForeground`);
-      if (isForeground) return;
+      // Check if conversation is specifically muted
+      if (notification.data?.conversationId) {
+        const Conversation = require('../models/Conversation');
+        const conv = await Conversation.findById(notification.data.conversationId);
+        if (conv) {
+          const participant = conv.participants.find(p => p.user && p.user.toString() === userId.toString());
+          if (participant && participant.isMuted) {
+            return; // Skip FCM push for muted conversation
+          }
+        }
+      }
+
+      // The earlier foreground check was too aggressive and blocked all push notifications 
+      // (friend requests, messages from other users) when the app was merely open but 
+      // on another screen. Android handles its own foreground notifications properly.
 
       // Get FCM tokens
       const tokens = user.fcmTokens?.map(t => t.token).filter(Boolean) || [];

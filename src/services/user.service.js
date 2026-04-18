@@ -2,6 +2,7 @@ const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const { sanitizePhone } = require('../utils/helpers');
 const logger = require('../utils/logger');
+const presenceService = require('./presence.service');
 
 class UserService {
   /**
@@ -15,11 +16,22 @@ class UserService {
 
     // If viewing self → full profile
     if (requesterId && requesterId.toString() === userId.toString()) {
-      return user.toPrivateProfile();
+      const p = user.toPrivateProfile();
+      const presence = await presenceService.getPresenceBatch([userId.toString()]);
+      if (presence[0]) {
+        p.isOnline = presence[0].isOnline;
+        if (presence[0].lastSeen) p.lastSeen = presence[0].lastSeen;
+      }
+      return p;
     }
 
     // Check privacy settings
     const profile = user.toPublicProfile();
+    const presence = await presenceService.getPresenceBatch([userId.toString()]);
+    if (presence[0]) {
+      profile.isOnline = presence[0].isOnline;
+      if (presence[0].lastSeen) profile.lastSeen = presence[0].lastSeen;
+    }
 
     if (requesterId) {
       const isFriend = user.friends.some(f => f.toString() === requesterId.toString());
@@ -218,6 +230,21 @@ class UserService {
         .lean(),
       User.countDocuments(searchQuery),
     ]);
+
+    const userIds = users.map(u => u._id.toString());
+    if (userIds.length > 0) {
+      const presenceStats = await presenceService.getPresenceBatch(userIds);
+      const presenceMap = {};
+      presenceStats.forEach(p => { presenceMap[p.id] = p; });
+      users.forEach(u => {
+        if (presenceMap[u._id.toString()]) {
+          u.isOnline = presenceMap[u._id.toString()].isOnline;
+          if (presenceMap[u._id.toString()].lastSeen) {
+            u.lastSeen = presenceMap[u._id.toString()].lastSeen;
+          }
+        }
+      });
+    }
 
     return {
       users,

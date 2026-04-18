@@ -3,6 +3,7 @@ const FriendRequest = require('../models/FriendRequest');
 const Conversation = require('../models/Conversation');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
+const presenceService = require('./presence.service');
 
 class FriendService {
   /**
@@ -31,29 +32,40 @@ class FriendService {
     }
 
     // Check existing request
-    const existingRequest = await FriendRequest.findOne({
+    let existingRequest = await FriendRequest.findOne({
       $or: [
-        { from: fromUserId, to: toUserId, status: 'pending' },
-        { from: toUserId, to: fromUserId, status: 'pending' },
+        { from: fromUserId, to: toUserId },
+        { from: toUserId, to: fromUserId },
       ],
     });
 
     if (existingRequest) {
-      if (existingRequest.from.toString() === fromUserId.toString()) {
-        throw ApiError.conflict('Đã gửi lời mời trước đó');
+      if (existingRequest.status === 'pending') {
+        if (existingRequest.from.toString() === fromUserId.toString()) {
+          throw ApiError.conflict('Đã gửi lời mời trước đó');
+        }
+        // If the other person already sent request, auto-accept
+        return this.acceptRequest(existingRequest._id, fromUserId);
       }
-      // If the other person already sent request, auto-accept
-      return this.acceptRequest(existingRequest._id, fromUserId);
+
+      // Recycle the document
+      existingRequest.from = fromUserId;
+      existingRequest.to = toUserId;
+      existingRequest.status = 'pending';
+      existingRequest.message = message || 'Xin chào! Mình muốn kết bạn với bạn.';
+      existingRequest.source = source || 'search';
+      existingRequest.respondedAt = undefined;
+      await existingRequest.save();
+    } else {
+      existingRequest = await FriendRequest.create({
+        from: fromUserId,
+        to: toUserId,
+        message: message || 'Xin chào! Mình muốn kết bạn với bạn.',
+        source,
+      });
     }
 
-    const request = await FriendRequest.create({
-      from: fromUserId,
-      to: toUserId,
-      message: message || 'Xin chào! Mình muốn kết bạn với bạn.',
-      source,
-    });
-
-    const populatedRequest = await FriendRequest.findById(request._id).populate('from', 'displayName avatar bio gender status onlineStatus');
+    const populatedRequest = await FriendRequest.findById(existingRequest._id).populate('from', 'displayName avatar bio gender status onlineStatus');
 
     try {
       const io = require('../socket').getIO();
@@ -73,7 +85,7 @@ class FriendService {
         type: 'friend_request',
         title: 'Lời mời kết bạn mới',
         body: `${populatedRequest.from.displayName} đã gửi lời mời kết bạn.`,
-        data: { requestId: request._id.toString(), fromUserId: fromUserId.toString() }
+        data: { requestId: existingRequest._id.toString(), fromUserId: fromUserId.toString() }
       });
     } catch (e) {
       logger.error('FCM error in sendRequest', e);
@@ -139,7 +151,9 @@ class FriendService {
         io.to(`user:${request.from}`).emit('friend:request_accepted', { requestId, toUser: request.to });
         io.to(`user:${request.to}`).emit('friend:request_accepted', { requestId, fromUser: request.from });
       }
-    } catch (e) {}
+    } catch (e) {
+      logger.error('Error emitting friend:request_accepted', e);
+    }
     
     // Call FCM Push
     try {
@@ -160,6 +174,23 @@ class FriendService {
     logger.info(`Friend request accepted: ${request.from} ↔ ${request.to}`);
 
     return { request, conversation };
+  }
+
+  /**
+   * Accept friend request by user ID
+   */
+  async acceptRequestByUserId(fromUserId, toUserId) {
+    const request = await FriendRequest.findOne({
+      from: fromUserId,
+      to: toUserId,
+      status: 'pending'
+    });
+    
+    if (!request) {
+      throw ApiError.notFound('Lời mời không tồn tại');
+    }
+    
+    return this.acceptRequest(request._id, toUserId);
   }
 
   /**
@@ -205,6 +236,13 @@ class FriendService {
     request.status = 'cancelled';
     await request.save();
 
+    try {
+      const io = require('../socket').getIO();
+      if (io) {
+        io.to(`user:${request.to}`).emit('friend:request_cancelled', { requestId });
+      }
+    } catch (e) {}
+
     return request;
   }
 
@@ -217,6 +255,13 @@ class FriendService {
 
     request.status = 'cancelled';
     await request.save();
+
+    try {
+      const io = require('../socket').getIO();
+      if (io) {
+        io.to(`user:${request.to}`).emit('friend:request_cancelled', { requestId: request._id });
+      }
+    } catch (e) {}
 
     return request;
   }
@@ -237,6 +282,21 @@ class FriendService {
         },
       });
 
+    const friendIds = user.friends.map(f => f._id.toString());
+    if (friendIds.length > 0) {
+      const presenceStats = await presenceService.getPresenceBatch(friendIds);
+      const presenceMap = {};
+      presenceStats.forEach(p => { presenceMap[p.id] = p; });
+      user.friends.forEach(f => {
+        if (presenceMap[f._id.toString()]) {
+          f.isOnline = presenceMap[f._id.toString()].isOnline;
+          if (presenceMap[f._id.toString()].lastSeen) {
+            f.lastSeen = presenceMap[f._id.toString()].lastSeen;
+          }
+        }
+      });
+    }
+
     return {
       friends: user.friends,
       total: user.friendCount,
@@ -244,17 +304,30 @@ class FriendService {
   }
 
   /**
-   * Get online friends
+   * Get online friends (accurate via Redis)
    */
   async getOnlineFriends(userId) {
     const user = await User.findById(userId)
       .populate({
         path: 'friends',
-        match: { isOnline: true },
-        select: 'displayName avatar customStatusText customStatusEmoji',
+        select: 'displayName avatar customStatusText customStatusEmoji isOnline lastSeen',
       });
 
-    return user.friends;
+    const friendIds = user.friends.map(f => f._id.toString());
+    const onlineFriends = [];
+    if (friendIds.length > 0) {
+      const presenceStats = await presenceService.getPresenceBatch(friendIds);
+      const onlineSet = new Set(presenceStats.filter(p => p.isOnline).map(p => p.id));
+      
+      user.friends.forEach(f => {
+        if (onlineSet.has(f._id.toString())) {
+          f.isOnline = true;
+          onlineFriends.push(f);
+        }
+      });
+    }
+
+    return onlineFriends;
   }
 
   /**

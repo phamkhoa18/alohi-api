@@ -182,6 +182,7 @@ userSchema.methods.toPrivateProfile = function () {
     isOnline: this.isOnline,
     lastSeen: this.lastSeen,
     createdAt: this.createdAt,
+    blockedUsers: this.blockedUsers,
   };
 };
 

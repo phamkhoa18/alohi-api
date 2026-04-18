@@ -5,6 +5,7 @@ const ApiError = require('../utils/ApiError');
 const MessageMetadata = require('../models/MessageMetadata');
 const Conversation = require('../models/Conversation');
 const MessageQueue = require('../models/MessageQueue');
+const presenceService = require('../services/presence.service');
 
 // @desc    Get messages in conversation
 // @route   GET /api/messages/:conversationId
@@ -26,10 +27,12 @@ exports.getMessages = asyncHandler(async (req, res) => {
     deletedFor: { $nin: [req.user._id] },
   })
     .populate('sender', 'displayName avatar isOnline')
-    .sort({ createdAt: 1 })
+    .sort({ createdAt: -1 })
     .skip(skip)
     .limit(parsedLimit)
     .lean();
+
+  messagesMeta.reverse(); // Reverse back to chronological order for the client
 
   // Merge content from MessageQueue (kept for 30 days securely)
   const metaIds = messagesMeta.map(m => m.messageId);
@@ -44,6 +47,22 @@ exports.getMessages = asyncHandler(async (req, res) => {
       encryptedContent: meta.encryptedContent || (q ? q.encryptedContent : null),
     };
   });
+
+  const userIds = [...new Set(messages.map(m => m.sender?._id?.toString()).filter(Boolean))];
+  if (userIds.length > 0) {
+    const presenceStats = await presenceService.getPresenceBatch(userIds);
+    const presenceMap = {};
+    presenceStats.forEach(p => { presenceMap[p.id] = p; });
+    
+    messages.forEach(m => {
+      if (m.sender && presenceMap[m.sender._id.toString()]) {
+        m.sender.isOnline = presenceMap[m.sender._id.toString()].isOnline;
+        if (presenceMap[m.sender._id.toString()].lastSeen) {
+          m.sender.lastSeen = presenceMap[m.sender._id.toString()].lastSeen;
+        }
+      }
+    });
+  }
 
   const total = await MessageMetadata.countDocuments({
     conversation: conversationId,
@@ -78,6 +97,52 @@ exports.sendMessage = asyncHandler(async (req, res) => {
       isOnline: req.user.isOnline
     }
   };
+
+  // Broadcast using Socket.IO exactly like chat.handler.js
+  try {
+    const io = require('../socket').getIO();
+    const presenceService = require('../services/presence.service');
+    const notificationService = require('../services/notification.service');
+    const conv = await Conversation.findById(conversationId).populate('participants.user', '_id');
+    
+    if (conv) {
+      for (const participant of conv.participants) {
+        const recipientId = participant.user._id.toString();
+        if (recipientId === req.user._id.toString()) continue;
+
+        const isOnline = await presenceService.isOnline(recipientId);
+        
+        if (isOnline) {
+          io.to(`user:${recipientId}`).emit('message:receive', {
+            messageId: message.messageId,
+            conversationId,
+            sender: populatedMessage.sender,
+            type: message.type,
+            content: message.content,
+            encryptedContent: message.encryptedContent,
+            attachments: message.attachments,
+            replyTo: req.body.replyTo,
+            preview: message.preview,
+            timestamp: message.timestamp,
+          });
+        }
+        
+        // Push Notification for offline or background users
+        // NOTE: Even if online, app might be in background, but we rely on FCM if app handles data messages
+        await notificationService.create({
+          recipientId,
+          senderId: req.user._id,
+          type: 'new_message',
+          title: req.user.displayName,
+          body: message.preview,
+          imageUrl: req.user.avatar?.thumbnailUrl,
+          data: { conversationId, messageId: message.messageId },
+        });
+      }
+    }
+  } catch (error) {
+    console.error('REST broadcast socket/FCM error:', error);
+  }
   
   new ApiResponse(201, 'Đã gửi tin nhắn', populatedMessage).send(res);
 });

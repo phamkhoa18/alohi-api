@@ -10,6 +10,9 @@ module.exports = (io, socket) => {
   // === message:send ===
   socket.on('message:send', async (data) => {
     try {
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch(e) { logger.error('Failed to parse message:send data'); }
+      }
       const { clientMessageId, conversationId, type, content, encryptedContent,
               attachments, replyTo, mentions, sticker, location, sharedContact } = data;
 
@@ -97,18 +100,18 @@ module.exports = (io, socket) => {
             preview: message.preview,
             timestamp: message.timestamp,
           });
-
-          // Send FCM push notification
-          await notificationService.create({
-            recipientId,
-            senderId: userId,
-            type: 'new_message',
-            title: socket.user.displayName,
-            body: message.preview,
-            imageUrl: socket.user.avatar?.thumbnailUrl,
-            data: { conversationId, messageId: message.messageId },
-          });
         }
+
+        // Send FCM push notification (notificationService checks redis appForeground internally)
+        await notificationService.create({
+          recipientId,
+          senderId: userId,
+          type: 'new_message',
+          title: socket.user.displayName,
+          body: message.preview,
+          imageUrl: socket.user.avatar?.thumbnailUrl,
+          data: { conversationId, messageId: message.messageId },
+        });
       }
 
     } catch (error) {
@@ -216,8 +219,12 @@ module.exports = (io, socket) => {
   });
 
   // === message:forward ===
-  socket.on('message:forward', async ({ messageId, targetConversationIds }) => {
+  socket.on('message:forward', async (data) => {
     try {
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch(e) { logger.error('Failed to parse message:forward data'); }
+      }
+      const { messageId, targetConversationIds } = data;
       const MessageMetadata = require('../models/MessageMetadata');
       const meta = await MessageMetadata.findOne({ messageId });
       if (!meta) return;
@@ -229,11 +236,44 @@ module.exports = (io, socket) => {
           clientMessageId: require('crypto').randomUUID(),
         });
 
-        io.to(`conv:${convId}`).emit('message:receive', {
-          ...forwarded,
-          sender: { _id: userId, displayName: socket.user.displayName },
-          forwardedFrom: { messageId },
-        });
+        // Get conversation participants
+        const conversation = await Conversation.findById(convId).populate('participants.user', 'displayName avatar');
+        
+        for (const participant of conversation.participants) {
+          const recipientId = participant.user._id.toString();
+          if (recipientId === userId) continue;
+
+          // Check if recipient is online
+          const isOnline = await presenceService.isOnline(recipientId);
+          const forwardedPayload = {
+            ...forwarded,
+            sender: { _id: userId, displayName: socket.user.displayName, avatar: socket.user.avatar },
+            forwardedFrom: { messageId },
+          };
+
+          if (isOnline) {
+            io.to(`user:${recipientId}`).emit('message:receive', forwardedPayload);
+          } else {
+            // Queue for offline delivery
+            await messageService.queueMessage(recipientId, {
+              ...forwardedPayload,
+              sender: userId,
+              senderName: socket.user.displayName,
+              senderAvatar: socket.user.avatar,
+            });
+          }
+
+          // Send FCM push notification
+          await notificationService.create({
+            recipientId,
+            senderId: userId,
+            type: 'new_message',
+            title: socket.user.displayName,
+            body: forwarded.preview,
+            imageUrl: socket.user.avatar?.thumbnailUrl,
+            data: { conversationId: convId, messageId: forwarded.messageId },
+          });
+        }
       }
     } catch (error) {
       logger.error('message:forward error:', error);

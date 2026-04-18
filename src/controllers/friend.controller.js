@@ -58,6 +58,12 @@ exports.acceptRequest = asyncHandler(async (req, res) => {
   new ApiResponse(200, 'Đã chấp nhận lời mời kết bạn', result).send(res);
 });
 
+// @desc    Accept friend request by user ID
+exports.acceptRequestByUserId = asyncHandler(async (req, res) => {
+  const result = await friendService.acceptRequestByUserId(req.params.userId, req.user._id);
+  new ApiResponse(200, 'Đã chấp nhận lời mời kết bạn', result).send(res);
+});
+
 // @desc    Reject friend request
 exports.rejectRequest = asyncHandler(async (req, res) => {
   await friendService.rejectRequest(req.params.requestId, req.user._id);
